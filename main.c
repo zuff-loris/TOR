@@ -46,6 +46,7 @@ const osMessageQueueAttr_t queue_macR_attr = {
 const osMessageQueueAttr_t queue_macS_attr = {
 	.name = "MAC_SENDER  "  	
 };
+
 const osMessageQueueAttr_t queue_phyS_attr = {
 	.name = "PH_SENDER   "  	
 };
