@@ -10,73 +10,38 @@ typedef struct newToken
 	uint8_t startByte;
 	uint8_t station[15];
 } myToken;
-typedef struct newDataFrame
-{
-	uint8_t	stx;
-	uint16_t control;
-	uint8_t length;
-	char* data;
-	uint8_t status;
-	uint8_t etx;
-} myDataFrame;
 
 osMessageQueueId_t queue_buffer_id;
-osStatus_t retCodeS;
-struct queueMsg_t queueMsgS;	
-myToken* token_ptr = 0;
+
 
 const osMessageQueueAttr_t queue_buffer_attr = {
 	.name = "BUFFER_SEND "  	
 };
 
-//////////////////////////////////////////////////////////////////////////////////
-/// \brief Send message on the message queue
-/// \param theId The id corresponding to the class we want to send a message
-//////////////////////////////////////////////////////////////////////////////////
-void SendMessageS(osMessageQueueId_t theId)
-{
-	retCodeS = osMessageQueuePut(
-		theId,
-		&queueMsgS,
-		osPriorityNormal,
-		osWaitForever);
-	CheckRetCode(retCodeS,__LINE__,__FILE__,CONTINUE);
-}
-bool updateStation()
-{
-	for(int i = 0; i <= 15; i++)
-	{
-		if(token_ptr->station[i] != gTokenInterface.station_list[i])
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
 void MacSender(void *argument)
 {
 	queue_buffer_id = osMessageQueueNew(8,sizeof(struct queueMsg_t),&queue_buffer_attr); 	
-	//struct newDataFrame myDataFrame;
-	uint8_t nbMsg = 0;
-	myDataFrame* data_ptr = 0;
-	bool newToken = false;
+	uint8_t length = 0;
+	uint8_t * msg_ptr = 0;
+	uint8_t crcCalculate = 0;
+	struct queueMsg_t queueMsgS;	
+	osStatus_t retCode;
+	myToken* token_ptr = 0;
+	token_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
 
 	for (;;){
 		//Get the message on the queue
-		retCodeS = osMessageQueueGet( 	
+		retCode = osMessageQueueGet( 	
 			queue_macS_id,
 			&queueMsgS,
 			NULL,
 			osWaitForever); 
 		
 		//Test if the message is succesfully read
-		if(retCodeS == osOK){
+		if(retCode == osOK){
 			switch(queueMsgS.type){
 				//New token must be created
 				case NEW_TOKEN:
-					newToken = true;
-					token_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
 					token_ptr->startByte = 0xFF;
 					for (int i = 0; i <= 15; i++){
 						if(i == MYADDRESS){
@@ -87,7 +52,12 @@ void MacSender(void *argument)
 					}
 					queueMsgS.anyPtr = token_ptr;
 					queueMsgS.type = TO_PHY;
-					SendMessageS(queue_phyS_id);					
+					retCode = osMessageQueuePut(
+						queue_phyS_id,
+						&queueMsgS,
+						osPriorityNormal,
+						osWaitForever);
+					CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);					
 					break;
 					
 				case START:
@@ -99,84 +69,129 @@ void MacSender(void *argument)
 				
 					break;
 				case DATA_IND:
-					data_ptr->stx = STX;
-					data_ptr->control = ((((MYADDRESS << 3) + queueMsgS.sapi) << 8) + (queueMsgS.addr << 3) + queueMsgS.sapi) & 0x7F7F;
-					data_ptr->data = queueMsgS.anyPtr;
-					data_ptr->length = strlen(data_ptr->data);
-					if(queueMsgS.addr == 15){
-						//broadcast message
-						data_ptr->status = ((data_ptr->control + (int)data_ptr->data + data_ptr->length) << 2) + 3;
-						data_ptr->status = (data_ptr->status & 0xFC) | (0x3 & 0x3);
-					}else{
-						//message to single station
-						data_ptr->status = (data_ptr->control + (int)data_ptr->data + data_ptr->length) << 2;
+					msg_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
+				
+					msg_ptr[0] = ((MYADDRESS << 3) + queueMsgS.sapi) & 0x7F;
+					msg_ptr[1] = ((queueMsgS.addr << 3) + queueMsgS.sapi) & 0x7F;
+					msg_ptr[2] = strlen(queueMsgS.anyPtr);
+					memcpy(&msg_ptr[3],queueMsgS.anyPtr,strlen(queueMsgS.anyPtr));
+					crcCalculate = msg_ptr[0] + msg_ptr[1] + msg_ptr[2];
+				
+					for(int i = 0; i < msg_ptr[2]; i++)
+					{
+						crcCalculate += msg_ptr[3+i];
 					}
-					data_ptr->etx = ETX;
-					queueMsgS.anyPtr = data_ptr;
-					queueMsgS.type = DATA_IND;
 					
-					SendMessageS(queue_buffer_id);					
+					msg_ptr[3+msg_ptr[2]] = (crcCalculate <<2);
+					
+					if(queueMsgS.addr == 15)
+					{
+						//broadcast message (READ = 1, ACK = 1)	
+						msg_ptr[3+msg_ptr[2]] += 3;
+					}
+
+					retCode = osMemoryPoolFree(memPool,queueMsgS.anyPtr);
+					CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+				  queueMsgS.anyPtr = msg_ptr;
+					queueMsgS.type = DATA_IND;
+				
+					retCode = osMessageQueuePut(
+						queue_buffer_id,
+						&queueMsgS,
+						osPriorityNormal,
+						osWaitForever);
+					CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+							
 					break;
 				case TOKEN:
 					token_ptr = queueMsgS.anyPtr;
-					if(updateStation())
+				
+					for(int i = 0; i <= 15; i++)
 					{
-						SendMessageS(queue_lcd_id);
+						if(token_ptr->station[i] != gTokenInterface.station_list[i])
+						{
+							queueMsgS.type = TOKEN_LIST;
+							retCode = osMessageQueuePut(
+								queue_lcd_id,
+								&queueMsgS,
+								osPriorityNormal,
+								osWaitForever);
+							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+							i = 15;
+						}
 					}
 					
-					//Send all messages on the queue when we have the token
-					do{
-						retCodeS = osMessageQueueGet( 	
-							queue_buffer_id,
+					retCode = osMessageQueueGet( 	
+						queue_buffer_id,
+						&queueMsgS,
+						NULL,
+						0); 		
+					//CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+					if(retCode == osOK)
+					{
+						queueMsgS.type = TO_PHY;
+						retCode = osMessageQueuePut(
+							queue_phyS_id,
 							&queueMsgS,
-							NULL,
-							20); 		
-					}while(retCodeS == osOK);	
-					if(retCodeS == osOK)
-					{
-						queueMsgS.type = TO_PHY;
-						SendMessageS(queue_phyS_id);	
-						nbMsg++;
-					}
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+					} 
 					
-					if(nbMsg == 0)				//if no message has been sent, we can release the token
-					{
-						queueMsgS.anyPtr = token_ptr;
-						queueMsgS.type = TO_PHY;
-						SendMessageS(queue_phyS_id);
-					}
-												
+					queueMsgS.anyPtr = token_ptr;
+					queueMsgS.type = TO_PHY;
+					retCode = osMessageQueuePut(
+						queue_phyS_id,
+						&queueMsgS,
+						osPriorityNormal,
+						osWaitForever);
+					CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+										
 					break;
 				case DATABACK:
-					data_ptr = queueMsgS.anyPtr;
+					msg_ptr = queueMsgS.anyPtr;
+					length = msg_ptr[2];
 
-					if(data_ptr->status&0x02 == 1)			//is READ bit set?
+					if(((msg_ptr[3+length] & 0x02)>>1) == 1)			//is READ bit set?
 					{
-							if(data_ptr->status&0x01 == 1)	//is ACK bit set?
+						if(msg_ptr[3+length]&0x01 == 1)	//is ACK bit set?
 						{
-							nbMsg--;
-							if(nbMsg == 0)									//all my messages has been received? (via databack)
-							{
-								queueMsgS.anyPtr = token_ptr;
-								queueMsgS.type = TO_PHY;
-								SendMessageS(queue_phyS_id);
-								newToken = false;
-							}
-							
+							queueMsgS.anyPtr = token_ptr;
+							queueMsgS.type = TO_PHY;
+							retCode = osMessageQueuePut(
+								queue_phyS_id,
+								&queueMsgS,
+								osPriorityNormal,
+								osWaitForever);
+							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 						} 
 						else 
 						{
-							data_ptr->status = data_ptr->status-2;
-							queueMsgS.anyPtr = data_ptr;
+							msg_ptr[3+msg_ptr[2]] -= 2;
+							queueMsgS.anyPtr = msg_ptr;
 							queueMsgS.type = TO_PHY;
-							SendMessageS(queue_phyS_id);
+							retCode = osMessageQueuePut(
+								queue_phyS_id,
+								&queueMsgS,
+								osPriorityNormal,
+								osWaitForever);
+							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 						}
-
-						} else 
-						{
-							queueMsgS.type = MAC_ERROR;
-							SendMessageS(queue_lcd_id);
-						}
+					}
+					else 
+					{
+						char* errorMsg = osMemoryPoolAlloc(memPool,osWaitForever);
+						errorMsg = "OH NON CEST FAUX\0"; 
+						queueMsgS.anyPtr = errorMsg;
+						 
+						queueMsgS.type = MAC_ERROR;
+						retCode = osMessageQueuePut(
+							queue_lcd_id,
+							&queueMsgS,
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+					}
 					break;
 				default:
 					break;

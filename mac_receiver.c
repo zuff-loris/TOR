@@ -5,21 +5,8 @@
 
 #include "main.h"
 
-osStatus_t retCodeR;
-struct queueMsg_t queueMsgR;
 
-//////////////////////////////////////////////////////////////////////////////////
-/// \brief Send message on the message queue
-/// \param theId The id corresponding to the class we want to send a message
-//////////////////////////////////////////////////////////////////////////////////
-void SendMessageR(osMessageQueueId_t theId){
-	retCodeR = osMessageQueuePut(
-		theId,
-		&queueMsgR,
-		osPriorityNormal,
-		osWaitForever);
-	CheckRetCode(retCodeR,__LINE__,__FILE__,CONTINUE);
-}
+
 //////////////////////////////////////////////////////////////////////////////////
 /// \brief Control if the checksum received is correct
 /// \param data Pointer to the data frame received
@@ -46,90 +33,112 @@ bool controlCS(uint8_t* data){
 }
 void MacReceiver(void *argument)
 {
-	uint8_t * msg_ptr;
+	uint8_t * data_ptr;
 	uint8_t * msg;
 	size_t size;
 	uint8_t length = 0;
+	osStatus_t retCode;
+	struct queueMsg_t queueMsgR;
 	
 	for(;;){
 		//Get the message on the queue
-		retCodeR = osMessageQueueGet(
+		retCode = osMessageQueueGet(
 			queue_macR_id,
 			&queueMsgR,
 			NULL,
 			osWaitForever);
 		
 		//Test if the message is succesfully read
-		if(retCodeR == osOK)
+		if(retCode == osOK)
 		{
-			msg_ptr = queueMsgR.anyPtr;
-			if(msg_ptr[0] == TOKEN_TAG)		
+			msg = queueMsgR.anyPtr;
+			if(msg[0] == TOKEN_TAG)		
 			{
 				size = TOKENSIZE;						//size of token frame
 			} 
 			else
 			{
-				size = msg_ptr[3] + 6;			//size of message frame + 6 for ETX,Control,...)
+				size = msg[2] + 4;			//size of message frame + 4 for Control, Status...)
 			}
-			//----------------------------------------------------------------------------
-			// MEMORY ALLOCATION				
-			//----------------------------------------------------------------------------
-			/*msg = osMemoryPoolAlloc(memPool,osWaitForever);
-			memcpy(msg,&msg_ptr[0],size);
-			queueMsgR.anyPtr = msg;*/
-						
-			if(msg_ptr[0] == TOKEN_TAG)			//token frame received
+
+			if(msg[0] == TOKEN_TAG)			//token frame received
 			{		
 				//--------------------------------------------------------------------------
 				// TOKEN RECEIVED AND SEND TO MAC SENDER			
 				//--------------------------------------------------------------------------			
 				queueMsgR.type = TOKEN;				//send token to MAC Sender
-				SendMessageR(queue_macS_id);
+				retCode = osMessageQueuePut(
+					queue_macS_id,
+					&queueMsgR,
+					osPriorityNormal,
+					osWaitForever);
+				CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 			} 
-			else if(msg_ptr[0]>>3 == gTokenInterface.myAddress)				//source is my address
-			{
-				if(msg_ptr[1]>>3 == gTokenInterface.myAddress)
+			else if(msg[1]>>3 == gTokenInterface.myAddress ||		//destination is my address 
+					msg[1]>>3 == BROADCAST_ADDRESS)					//or broadcast 
+			{		
+				if(controlCS(msg))		//control checksum
 				{
-					
-				}
-				queueMsgR.type = DATABACK;			//send databack to MAC Sender
-				SendMessageR(queue_macS_id);
-			} 
-			else
-			{
-				if(msg_ptr[1]>>3 == gTokenInterface.myAddress ||		//destination is my address 
-					msg_ptr[1]>>3 == BROADCAST_ADDRESS)					//or broadcast 
-				{		
-					if(controlCS(msg))		//control checksum
+					//----------------------------------------------------------------------------
+					// MEMORY ALLOCATION				
+					//----------------------------------------------------------------------------
+					data_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
+					memcpy(data_ptr,&msg[3],msg[2]);
+					queueMsgR.anyPtr = data_ptr;
+
+					queueMsgR.type = DATA_IND;				
+					if(msg[1]&0x03 == CHAT_SAPI)				//chat received
 					{
-						//checksum is correct, we can read the message
-						length = msg_ptr[2];
-						msg_ptr[length+3] = (msg_ptr[length+3] & 0xFC) | (0x3 & 0x3);		//set READ and ACK bits
-						queueMsgR.type = DATA_IND;				
-						if(msg_ptr[1]&0x03 == CHAT_SAPI)				//chat received
-						{
-							SendMessageR(queue_chatR_id);
-						} 
-						else if(msg_ptr[1]&0x03 == TIME_SAPI)		//time received
-						{
-							SendMessageR(queue_timeR_id);
-						}
+						retCode = osMessageQueuePut(
+							queue_chatR_id,
+							&queueMsgR,
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 					} 
-					else			//checksum is incorrect
+					else if(msg[1]&0x03 == TIME_SAPI)		//time received
 					{
-						length = msg_ptr[2];
-						msg_ptr[length+3] = (msg_ptr[length+3] & 0xFC) | (0x2 & 0x3);		//set READ and clear ACK
-						queueMsgR.type = TO_PHY;
-						SendMessageR(queue_phyS_id);
+						retCode = osMessageQueuePut(
+							queue_timeR_id,
+							&queueMsgR,
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 					}
-					
 				} 
-				else 				//message not ment for us, send back to physical layer
+				else			//checksum is incorrect
 				{
+					length = msg[2];
+					msg[length+3] = (msg[length+3] & 0xFC) | (0x2 & 0x3);		//set READ and clear ACK
 					queueMsgR.type = TO_PHY;
-					SendMessageR(queue_phyS_id);
+					retCode = osMessageQueuePut(
+						queue_phyS_id,
+						&queueMsgR,
+						osPriorityNormal,
+						osWaitForever);
+					CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 				}
 			}
-		}
+			else if(msg[0]>>3 == gTokenInterface.myAddress)	//source is my address
+			{
+				queueMsgR.type = DATABACK;			//send databack to MAC Sender
+				retCode = osMessageQueuePut(
+					queue_macS_id,
+					&queueMsgR,
+					osPriorityNormal,
+					osWaitForever);
+				CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+			}
+			else			//message not ment for us, send back to physical layer
+			{
+				queueMsgR.type = TO_PHY;
+				retCode = osMessageQueuePut(
+					queue_phyS_id,
+					&queueMsgR,
+					osPriorityNormal,
+					osWaitForever);
+				CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+			}
+			}		//Message a nous meme: limité a 2 ou 3
 	}
 }
