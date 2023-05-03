@@ -14,15 +14,15 @@
 bool controlCS(uint8_t* data){
 	uint8_t calculateCS = 0; 
 	uint8_t length = 0;
-	length = data[3];
+	length = data[2];
 	
-	calculateCS = data[1] + data[2] + data[3];
+	calculateCS = data[0] + data[1] + data[2];
 	for(int i = 0; i < length; i++)
 	{
-		calculateCS += data[4+i];
+		calculateCS += data[3+i];
 	}
-	calculateCS = calculateCS&0x3F;
-	if(calculateCS == (data[length+4]>>2))
+	calculateCS = calculateCS << 2;
+	if(calculateCS == (data[length+3]&0xFC))
 	{
 		return true;
 	} 
@@ -84,10 +84,25 @@ void MacReceiver(void *argument)
 					//----------------------------------------------------------------------------
 					data_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
 					memcpy(data_ptr,&msg[3],msg[2]);
+					queueMsgR.addr = msg[0] >> 3;
+					
+					if(msg[0]>>3 != gTokenInterface.myAddress)
+					{
+						msg[3+msg[2]] = msg[3+msg[2]] | 0x3;
+						queueMsgR.type = TO_PHY;
+						queueMsgR.anyPtr = msg;
+						retCode = osMessageQueuePut(
+							queue_phyS_id,
+							&queueMsgR,
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+					}
+					data_ptr[msg[2]] = '\0';
 					queueMsgR.anyPtr = data_ptr;
 
 					queueMsgR.type = DATA_IND;				
-					if(msg[1]&0x03 == CHAT_SAPI)				//chat received
+					if((msg[1]&0x03) == CHAT_SAPI)				//chat received
 					{
 						retCode = osMessageQueuePut(
 							queue_chatR_id,
@@ -96,8 +111,9 @@ void MacReceiver(void *argument)
 							osWaitForever);
 						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 					} 
-					else if(msg[1]&0x03 == TIME_SAPI)		//time received
+					else if((msg[1]&0x03) == TIME_SAPI)		//time received
 					{
+						//queueMsgR.sapi = TIME_SAPI;
 						retCode = osMessageQueuePut(
 							queue_timeR_id,
 							&queueMsgR,

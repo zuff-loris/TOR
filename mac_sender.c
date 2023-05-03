@@ -108,8 +108,17 @@ void MacSender(void *argument)
 				
 					for(int i = 0; i <= 15; i++)
 					{
+						if(i == MYADDRESS && gTokenInterface.connected == true)
+						{
+							token_ptr->station[i] = (1 << TIME_SAPI) | (1 << CHAT_SAPI);
+						} 
+						else if(i == MYADDRESS)
+						{
+							token_ptr->station[i] = (1 << TIME_SAPI);
+						}
 						if(token_ptr->station[i] != gTokenInterface.station_list[i])
 						{
+							gTokenInterface.station_list[i] = token_ptr->station[i];
 							queueMsgS.type = TOKEN_LIST;
 							retCode = osMessageQueuePut(
 								queue_lcd_id,
@@ -117,7 +126,7 @@ void MacSender(void *argument)
 								osPriorityNormal,
 								osWaitForever);
 							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
-							i = 15;
+							i = 16;
 						}
 					}
 					
