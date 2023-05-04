@@ -35,7 +35,6 @@ void MacReceiver(void *argument)
 {
 	uint8_t * data_ptr;
 	uint8_t * msg;
-	size_t size;
 	uint8_t length = 0;
 	osStatus_t retCode;
 	struct queueMsg_t queueMsgR;
@@ -52,14 +51,6 @@ void MacReceiver(void *argument)
 		if(retCode == osOK)
 		{
 			msg = queueMsgR.anyPtr;
-			if(msg[0] == TOKEN_TAG)		
-			{
-				size = TOKENSIZE;						//size of token frame
-			} 
-			else
-			{
-				size = msg[2] + 4;			//size of message frame + 4 for Control, Status...)
-			}
 
 			if(msg[0] == TOKEN_TAG)			//token frame received
 			{		
@@ -97,7 +88,20 @@ void MacReceiver(void *argument)
 							osPriorityNormal,
 							osWaitForever);
 						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+					} 
+					else	//source is my address
+					{
+						msg[3+msg[2]] = msg[3+msg[2]] | 0x3;
+						queueMsgR.type = DATABACK;			//send databack to MAC Sender
+						queueMsgR.anyPtr = msg;
+						retCode = osMessageQueuePut(
+							queue_macS_id,
+							&queueMsgR,
+							osPriorityNormal,
+							osWaitForever);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 					}
+
 					data_ptr[msg[2]] = '\0';
 					queueMsgR.anyPtr = data_ptr;
 

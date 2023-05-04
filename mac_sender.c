@@ -145,6 +145,7 @@ void MacSender(void *argument)
 							osPriorityNormal,
 							osWaitForever);
 						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+						
 					} 
 					
 					queueMsgS.anyPtr = token_ptr;
@@ -164,7 +165,11 @@ void MacSender(void *argument)
 					if(((msg_ptr[3+length] & 0x02)>>1) == 1)			//is READ bit set?
 					{
 						if(msg_ptr[3+length]&0x01 == 1)	//is ACK bit set?
-						{
+						{	
+							// Read = 1 & ACK = 1 => Send Token
+							retCode = osMemoryPoolFree(memPool,queueMsgS.anyPtr);
+							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+							
 							queueMsgS.anyPtr = token_ptr;
 							queueMsgS.type = TO_PHY;
 							retCode = osMessageQueuePut(
@@ -174,8 +179,11 @@ void MacSender(void *argument)
 								osWaitForever);
 							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 						} 
-						else 
+						else 	// Read = 1 & ACK = 0 => Send message back
 						{
+							retCode = osMemoryPoolFree(memPool,queueMsgS.anyPtr);
+							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+							
 							msg_ptr[3+msg_ptr[2]] -= 2;
 							queueMsgS.anyPtr = msg_ptr;
 							queueMsgS.type = TO_PHY;
@@ -187,8 +195,11 @@ void MacSender(void *argument)
 							CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 						}
 					}
-					else 
+					else 		// Read = 0 => MAC ERROR
 					{
+						retCode = osMemoryPoolFree(memPool,queueMsgS.anyPtr);
+						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
+						
 						char* errorMsg = osMemoryPoolAlloc(memPool,osWaitForever);
 						errorMsg = "OH NON CEST FAUX\0"; 
 						queueMsgS.anyPtr = errorMsg;
