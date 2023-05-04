@@ -23,12 +23,12 @@ void MacSender(void *argument)
 	queue_buffer_id = osMessageQueueNew(8,sizeof(struct queueMsg_t),&queue_buffer_attr); 	
 	uint8_t length = 0;
 	uint8_t * msg_ptr = 0;
-	uint8_t * msgTemp = 0;
+	//uint8_t * msgTemp = 0;
 	uint8_t crcCalculate = 0;
 	struct queueMsg_t queueMsgS;	
 	osStatus_t retCode;
 	myToken* token_ptr = 0;
-	//token_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
+	token_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
 
 	for (;;){
 		//Get the message on the queue
@@ -208,7 +208,7 @@ void MacSender(void *argument)
 						CheckRetCode(retCode,__LINE__,__FILE__,CONTINUE);
 						
 						char* errorMsg = osMemoryPoolAlloc(memPool,osWaitForever);
-						errorMsg = "OH NON CEST FAUX\0"; 
+						errorMsg = "OH NON CEST FAUX \0"; 
 						queueMsgS.anyPtr = errorMsg;
 						 
 						queueMsgS.type = MAC_ERROR;
