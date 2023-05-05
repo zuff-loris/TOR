@@ -82,10 +82,11 @@ void MacReceiver(void *argument)
 					data_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
 					memcpy(data_ptr,&msg[3],msg[2]);
 					queueMsgR.addr = msg[0] >> 3;
+          
+          msg[3+msg[2]] = msg[3+msg[2]] | 0x3;			  //Set READ and ACK
 					
 					if(msg[0]>>3 != gTokenInterface.myAddress)	//Source is not my address?
-					{
-						msg[3+msg[2]] = msg[3+msg[2]] | 0x3;			//Set READ and ACK
+					{						
 						queueMsgR.type = TO_PHY;
 						queueMsgR.anyPtr = msg;
 						retCode = osMessageQueuePut(							//Send back on physical layer
@@ -97,7 +98,6 @@ void MacReceiver(void *argument)
 					} 
 					else																				//Source is my address ?
 					{
-						msg[3+msg[2]] = msg[3+msg[2]] | 0x3;			//Set READ and ACK
 						queueMsgR.type = DATABACK;								//Send databack to mac_sender
 						queueMsgR.anyPtr = msg;
 						retCode = osMessageQueuePut(

@@ -155,9 +155,6 @@ void MacSender(void *argument)
 						0); 		
 					if(retCode == osOK)																							//A message has been found?
 					{
-						//msgTemp = queueMsgS.anyPtr;
-						//msg_ptr = osMemoryPoolAlloc(memPool,osWaitForever);
-						//memcpy(msg_ptr,&msgTemp,msgTemp[2]+4);
 						
 						queueMsgS.type = TO_PHY;																			//Send the message to the physical layer
 						retCode = osMessageQueuePut(
